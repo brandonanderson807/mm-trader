@@ -8,9 +8,9 @@ use std::time::Duration;
 
 const GMX_API_BASE: &str = "https://arbitrum-api.gmxinfra.io";
 const LOOKBACK_PERIOD: usize = 20; // Number of periods to look back for mean calculation
-const Z_SCORE_THRESHOLD: f64 = 2.0; // Threshold for trading signals
+const Z_SCORE_THRESHOLD: f64 = 3.0; // Threshold for trading signals
 const PRICE_UPDATE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60); // Update prices daily
-const MAX_TRADE_DURATION: Duration = Duration::from_secs(30 * 24 * 60 * 60); // 30 days
+const MAX_TRADE_DURATION: Duration = Duration::from_secs(14 * 24 * 60 * 60); // 14 days
 const PROFIT_TAKING_THRESHOLD: f64 = 0.05; // 5% profit taking
 const STOP_LOSS_THRESHOLD: f64 = 0.03; // 3% stop loss
 
@@ -65,21 +65,6 @@ impl PairsTradingStrategy {
             available_capital: initial_capital,
             active_positions: Vec::new(),
         }
-    }
-
-    async fn fetch_price_data(&self, token_symbol: &str) -> Result<gmx::PriceData> {
-        let url = format!("{}/prices/tickers", GMX_API_BASE);
-        let response = reqwest::get(&url).await?;
-        let data: serde_json::Value = response.json().await?;
-        
-        // Extract price for the given token symbol
-        // Note: This is a simplified version. You'll need to adjust based on actual GMX API response structure
-        let price = data[token_symbol]["price"].as_f64().unwrap_or(0.0);
-        
-        Ok(gmx::PriceData {
-            timestamp: Utc::now(),
-            price,
-        })
     }
 
     fn calculate_spread(&self) -> f64 {
