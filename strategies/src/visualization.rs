@@ -84,7 +84,7 @@ pub fn create_rsi_visualization(
     let mut color_index = 0;
     
     for (asset, asset_trades) in &trades_by_asset {
-        let color = colors[color_index % colors.len()];
+        let color_owned = *colors[color_index % colors.len()]; // Create an owned copy
         color_index += 1;
         
         for trade in asset_trades {
@@ -117,10 +117,11 @@ pub fn create_rsi_visualization(
         }
         
         // Add a legend entry for this asset
+        let color_owned = *color; // Create an owned copy of the color
         price_chart.draw_series(std::iter::once(
-            PathElement::new(vec![(from_date, 0.0), (from_date, 0.0)], color)
+            PathElement::new(vec![(from_date, 0.0), (from_date, 0.0)], color_owned)
         ))?.label(format!("{} Trades", asset))
-          .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], color));
+          .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], color_owned));
     }
 
     price_chart
@@ -201,7 +202,7 @@ pub fn create_rsi_visualization(
     // Draw bars for each asset
     color_index = 0;
     for (i, (asset, asset_trades)) in trades_by_asset.iter().enumerate() {
-        let color = colors[color_index % colors.len()];
+        let _color = colors[color_index % colors.len()]; // Prefix with underscore to indicate unused
         color_index += 1;
         
         let long_trades = asset_trades.iter().filter(|t| matches!(t.signal, TradingSignal::Long(_))).count();
@@ -215,10 +216,10 @@ pub fn create_rsi_visualization(
             let y1 = 0_i32;
             let y2 = long_trades as i32;
             
-            trade_chart.draw_series(std::iter::once(
-                Rectangle::new([(x1, y1), (x2, y2)], GREEN.filled())
-            ))?
-            .label(format!("{} Long", asset));
+            // Create a rectangle with explicit i32 coordinates
+            let rect = Rectangle::new([(x1, y1), (x2, y2)], GREEN.filled());
+            trade_chart.draw_series(std::iter::once(rect))?
+                .label(format!("{} Long", asset));
         }
         
         // Draw short trades bar
@@ -229,10 +230,10 @@ pub fn create_rsi_visualization(
             let y1 = 0_i32;
             let y2 = short_trades as i32;
             
-            trade_chart.draw_series(std::iter::once(
-                Rectangle::new([(x1, y1), (x2, y2)], RED.filled())
-            ))?
-            .label(format!("{} Short", asset));
+            // Create a rectangle with explicit i32 coordinates
+            let rect = Rectangle::new([(x1, y1), (x2, y2)], RED.filled());
+            trade_chart.draw_series(std::iter::once(rect))?
+                .label(format!("{} Short", asset));
         }
     }
 
