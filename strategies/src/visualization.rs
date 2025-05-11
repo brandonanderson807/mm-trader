@@ -87,9 +87,6 @@ pub fn create_rsi_visualization(
         let color = colors[color_index % colors.len()];
         color_index += 1;
         
-        // Create a series for this asset's trades
-        let mut series = Vec::new();
-        
         for trade in asset_trades {
             // Find the price at this timestamp
             let price = reference_prices.iter()
