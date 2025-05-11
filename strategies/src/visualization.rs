@@ -182,20 +182,21 @@ pub fn create_rsi_visualization(
         .margin(10)
         .caption("Trade Distribution by Asset", ("sans-serif", 30))
         .build_cartesian_2d(
-            0..trades_by_asset.len() + 1,
-            0..trades.len() + 1,
+            0_i32..(trades_by_asset.len() as i32) + 1,
+            0_i32..(trades.len() as i32) + 1,
         )?;
 
     trade_chart.configure_mesh()
         .disable_x_mesh()
         .disable_y_mesh()
-        .x_labels(trades_by_asset.len() + 1)
+        .x_labels((trades_by_asset.len() + 1) as usize)
         .x_label_formatter(&|x| {
-            if *x == 0 || *x > trades_by_asset.len() {
+            let x_usize = *x as usize;
+            if x_usize == 0 || x_usize > trades_by_asset.len() {
                 return "".to_string();
             }
             let keys: Vec<_> = trades_by_asset.keys().collect();
-            keys[*x - 1].clone()
+            keys[x_usize - 1].clone()
         })
         .y_desc("Number of Trades")
         .draw()?;
