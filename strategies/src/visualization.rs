@@ -94,7 +94,7 @@ pub fn create_rsi_visualization(
                 .map(|p| p.price)
                 .unwrap_or(0.0);
             
-            let style = ShapeStyle::from(color).filled();
+            let style = ShapeStyle::from(color_owned).filled();
             
             // Add appropriate marker based on trade signal type
             match trade.signal {
@@ -117,7 +117,7 @@ pub fn create_rsi_visualization(
         }
         
         // Add a legend entry for this asset
-        let color_owned = *color; // Create an owned copy of the color
+        // Use the already created color_owned variable
         price_chart.draw_series(std::iter::once(
             PathElement::new(vec![(from_date, 0.0), (from_date, 0.0)], color_owned)
         ))?.label(format!("{} Trades", asset))
