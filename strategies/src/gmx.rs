@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
-const GMX_API_BASE: &str = "https://arbitrum-api.gmxinfra.io";
+pub const GMX_API_BASE: &str = "https://arbitrum-api.gmxinfra.io";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PriceData {
@@ -119,4 +119,4 @@ mod tests {
         let prices = result.unwrap();
         assert!(prices.len() >= 24, "Expected at least 24 prices, got {}", prices.len());
     }
-} 
+}
