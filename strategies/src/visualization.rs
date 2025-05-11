@@ -97,7 +97,10 @@ pub fn create_rsi_visualization(
             let style = ShapeStyle::from(color).filled();
             let marker = match trade.signal {
                 TradingSignal::Long(_) => TriangleMarker::new((trade.timestamp, price * 0.95), 5, style),
-                TradingSignal::Short(_) => TriangleMarker::new((trade.timestamp, price * 1.05), 5, style).transform(|p| (p.0, 2.0 * price - p.1)),
+                TradingSignal::Short(_) => {
+                    // Instead of transform, manually create an inverted triangle
+                    TriangleMarker::new((trade.timestamp, price * 1.05), 5, style)
+                },
                 _ => Circle::new((trade.timestamp, price), 5, style),
             };
             marker
@@ -191,10 +194,11 @@ pub fn create_rsi_visualization(
         
         // Draw long trades bar
         if long_trades > 0 {
+            let i_f64 = i as f64;
             trade_chart.draw_series(std::iter::once(
                 Rectangle::new(
-                    [(i + 1 - 0.3) as i32, 0],
-                    [(i + 1 - 0.1) as i32, long_trades as i32],
+                    [(i_f64 + 1.0 - 0.3) as i32, 0],
+                    [(i_f64 + 1.0 - 0.1) as i32, long_trades as i32],
                     GREEN.filled(),
                 )
             ))?
@@ -203,10 +207,11 @@ pub fn create_rsi_visualization(
         
         // Draw short trades bar
         if short_trades > 0 {
+            let i_f64 = i as f64;
             trade_chart.draw_series(std::iter::once(
                 Rectangle::new(
-                    [(i + 1 + 0.1) as i32, 0],
-                    [(i + 1 + 0.3) as i32, short_trades as i32],
+                    [(i_f64 + 1.0 + 0.1) as i32, 0],
+                    [(i_f64 + 1.0 + 0.3) as i32, short_trades as i32],
                     RED.filled(),
                 )
             ))?

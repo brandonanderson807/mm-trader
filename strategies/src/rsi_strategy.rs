@@ -82,10 +82,10 @@ impl RsiTradingStrategy {
     fn check_position_exit(&self, position: &ActivePosition, current_price: f64) -> bool {
         let pnl = match position.trade.signal {
             TradingSignal::Long(ref _symbol) => {
-                (current_price / position.trade.entry_price1 - 1.0)
+                current_price / position.trade.entry_price1 - 1.0
             },
             TradingSignal::Short(ref _symbol) => {
-                (position.trade.entry_price1 / current_price - 1.0)
+                position.trade.entry_price1 / current_price - 1.0
             },
             _ => 0.0,
         };
@@ -305,20 +305,26 @@ impl Strategy for RsiTradingStrategy {
     fn update_prices(&mut self, price1: PriceData, _price2: PriceData) {
         // Update price history for all assets
         for asset in self.long_assets.iter().chain(self.short_assets.iter()) {
-            let prices = self.price_history.entry(asset.clone())
-                .or_insert_with(|| VecDeque::with_capacity(RSI_PERIOD + 1));
-            
-            if prices.len() >= RSI_PERIOD + 1 {
-                prices.pop_front();
+            let asset_clone = asset.clone();
+            {
+                let prices = self.price_history.entry(asset_clone.clone())
+                    .or_insert_with(|| VecDeque::with_capacity(RSI_PERIOD + 1));
+                
+                if prices.len() >= RSI_PERIOD + 1 {
+                    prices.pop_front();
+                }
+                
+                // Here we would update with the actual price for the specific asset
+                // For now, using price1 as a placeholder
+                prices.push_back(price1.clone());
             }
             
-            // Here we would update with the actual price for the specific asset
-            // For now, using price1 as a placeholder
-            prices.push_back(price1.clone());
-            
             // Calculate RSI for this asset
-            let rsi = self.calculate_rsi(prices);
-            self.rsi_values.insert(asset.clone(), rsi);
+            let rsi = {
+                let prices = self.price_history.get(&asset_clone).unwrap();
+                self.calculate_rsi(prices)
+            };
+            self.rsi_values.insert(asset_clone, rsi);
         }
 
         // Update positions

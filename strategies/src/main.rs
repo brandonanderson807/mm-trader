@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::time::Duration;
 
-use strategy::{Strategy, Trade, TradingSignal};
+use strategy::{Strategy, TradingSignal};
 use rsi_strategy::RsiTradingStrategy;
 
 const GMX_API_BASE: &str = "https://arbitrum-api.gmxinfra.io";
@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
         strategy.update_prices(btc_price.clone(), btc_price.clone());
         
         // For each asset, update its price in the strategy
-        for (asset, prices) in &asset_prices {
+        for (_asset, _prices) in &asset_prices {
             if i < prices.len() {
                 // In a real implementation, we would update each asset's price here
                 // For now, the strategy just uses the reference timestamp
