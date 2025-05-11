@@ -1,6 +1,7 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use plotters::prelude::*;
+use plotters::element::PointCollection;
 use std::collections::HashMap;
 
 use crate::gmx::PriceData;
@@ -95,11 +96,23 @@ pub fn create_rsi_visualization(
                 .unwrap_or(0.0);
             
             let style = ShapeStyle::from(color).filled();
-            // Use a common trait object instead of different marker types
-            let marker: Box<dyn PointCollection<'_, (DateTime<Utc>, f64), plotters::style::full_palette::BLUE>> = match trade.signal {
-                TradingSignal::Long(_) => Box::new(TriangleMarker::new((trade.timestamp, price * 0.95), 5, style)),
-                TradingSignal::Short(_) => Box::new(TriangleMarker::new((trade.timestamp, price * 1.05), 5, style)),
-                _ => Box::new(Circle::new((trade.timestamp, price), 5, style)),
+            // Create marker based on trade signal type
+            match trade.signal {
+                TradingSignal::Long(_) => {
+                    price_chart.draw_series(std::iter::once(
+                        TriangleMarker::new((trade.timestamp, price * 0.95), 5, style)
+                    ))?;
+                },
+                TradingSignal::Short(_) => {
+                    price_chart.draw_series(std::iter::once(
+                        TriangleMarker::new((trade.timestamp, price * 1.05), 5, style)
+                    ))?;
+                },
+                _ => {
+                    price_chart.draw_series(std::iter::once(
+                        Circle::new((trade.timestamp, price), 5, style)
+                    ))?;
+                },
             };
             marker
         }))?
