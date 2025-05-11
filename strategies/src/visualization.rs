@@ -87,7 +87,10 @@ pub fn create_rsi_visualization(
         let color = colors[color_index % colors.len()];
         color_index += 1;
         
-        price_chart.draw_series(asset_trades.iter().map(|trade| {
+        // Create a series for this asset's trades
+        let mut series = Vec::new();
+        
+        for trade in asset_trades {
             // Find the price at this timestamp
             let price = reference_prices.iter()
                 .find(|p| p.timestamp == trade.timestamp)
@@ -95,7 +98,8 @@ pub fn create_rsi_visualization(
                 .unwrap_or(0.0);
             
             let style = ShapeStyle::from(color).filled();
-            // Create marker based on trade signal type
+            
+            // Add appropriate marker based on trade signal type
             match trade.signal {
                 TradingSignal::Long(_) => {
                     price_chart.draw_series(std::iter::once(
@@ -112,12 +116,14 @@ pub fn create_rsi_visualization(
                         Circle::new((trade.timestamp, price), 5, style)
                     ))?;
                 },
-            };
-            // Return an empty result to satisfy the map function
-            Ok(())
-        }))?
-        .label(format!("{} Trades", asset))
-        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], color));
+            }
+        }
+        
+        // Add a legend entry for this asset
+        price_chart.draw_series(std::iter::once(
+            PathElement::new(vec![(from_date, 0.0), (from_date, 0.0)], color)
+        ))?.label(format!("{} Trades", asset))
+          .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], color));
     }
 
     price_chart
@@ -208,7 +214,7 @@ pub fn create_rsi_visualization(
             let i_f64 = i as f64;
             let x1 = (i_f64 + 1.0 - 0.3) as i32;
             let x2 = (i_f64 + 1.0 - 0.1) as i32;
-            let y1 = 0;
+            let y1 = 0_i32;
             let y2 = long_trades as i32;
             
             trade_chart.draw_series(std::iter::once(
@@ -222,7 +228,7 @@ pub fn create_rsi_visualization(
             let i_f64 = i as f64;
             let x1 = (i_f64 + 1.0 + 0.1) as i32;
             let x2 = (i_f64 + 1.0 + 0.3) as i32;
-            let y1 = 0;
+            let y1 = 0_i32;
             let y2 = short_trades as i32;
             
             trade_chart.draw_series(std::iter::once(
