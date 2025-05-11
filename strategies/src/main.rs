@@ -1,6 +1,7 @@
 mod gmx;
 mod strategy;
 mod pairs_trading;
+mod rsi_strategy;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -8,7 +9,7 @@ use plotters::prelude::*;
 use std::time::Duration;
 
 use strategy::{Strategy, Trade, TradingSignal};
-use pairs_trading::PairsTradingStrategy;
+use rsi_strategy::RsiTradingStrategy;
 
 const GMX_API_BASE: &str = "https://arbitrum-api.gmxinfra.io";
 const PRICE_UPDATE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60); // Update prices daily
@@ -18,17 +19,32 @@ mod visualization;
 #[tokio::main]
 async fn main() -> Result<()> {
     const INITIAL_CAPITAL: f64 = 10_000.0;
-    let mut strategy = PairsTradingStrategy::new(INITIAL_CAPITAL);
+    let mut strategy = RsiTradingStrategy::new(INITIAL_CAPITAL);
     
-    // Fetch historical data for the last 2 years
-    let asset1_prices = gmx::fetch_historical_prices("SOL", 365 * 2).await?;
-    let asset2_prices = gmx::fetch_historical_prices("BTC", 365 * 2).await?;
+    // Fetch historical data for all assets
+    let long_assets = vec!["BTC", "SOL", "ETH"];
+    let short_assets = vec!["PEPE", "FARTCOIN", "XRP"];
+    let mut asset_prices = Vec::new();
     
-    println!("Fetched {} SOL prices and {} BTC prices", asset1_prices.len(), asset2_prices.len());
+    // Fetch prices for all assets
+    for asset in long_assets.iter().chain(short_assets.iter()) {
+        let prices = gmx::fetch_historical_prices(asset, 365 * 2).await?;
+        println!("Fetched {} {} prices", prices.len(), asset);
+        asset_prices.push((asset.to_string(), prices));
+    }
     
+    // Get the minimum length to ensure we process the same timeframe for all assets
+    let min_length = asset_prices.iter()
+        .map(|(_, prices)| prices.len())
+        .min()
+        .unwrap_or(0);
+
     // Process each price point
-    for (price1, price2) in asset1_prices.iter().zip(asset2_prices.iter()) {
-        strategy.update_prices(price1.clone(), price2.clone());
+    for i in 0..min_length {
+        // Update with BTC price as reference (first asset) and itself as second price
+        // The strategy will handle multiple assets internally
+        let btc_price = &asset_prices[0].1[i];
+        strategy.update_prices(btc_price.clone(), btc_price.clone());
         strategy.get_trading_signal();
     }
     
@@ -50,13 +66,14 @@ async fn main() -> Result<()> {
         .collect();
 
     // Calculate BTC buy & hold returns in percentages
-    let first_trade_time = trades.first().map(|t| t.timestamp).unwrap_or(asset2_prices[0].timestamp);
-    let initial_btc_price = asset2_prices.iter()
+    let btc_prices = &asset_prices[0].1; // BTC is first asset
+    let first_trade_time = trades.first().map(|t| t.timestamp).unwrap_or(btc_prices[0].timestamp);
+    let initial_btc_price = btc_prices.iter()
         .find(|price| price.timestamp >= first_trade_time)
         .map(|price| price.price)
-        .unwrap_or(asset2_prices[0].price);
+        .unwrap_or(btc_prices[0].price);
 
-    let btc_returns: Vec<(DateTime<Utc>, f64)> = asset2_prices
+    let btc_returns: Vec<(DateTime<Utc>, f64)> = btc_prices
         .iter()
         .filter(|price| price.timestamp >= first_trade_time)
         .map(|price| {
@@ -65,18 +82,11 @@ async fn main() -> Result<()> {
         })
         .collect();
 
-    // Extract z-scores for visualization
-    let z_scores: Vec<(DateTime<Utc>, f64)> = trades
-        .iter()
-        .map(|trade| (trade.timestamp, trade.z_score))
-        .collect();
-
     // Create visualization
-    visualization::create_visualization(
-        &asset1_prices,
+    visualization::create_rsi_visualization(
+        btc_prices,
         &strategy_returns,
         &btc_returns,
-        &z_scores,
         trades,
     )?;
 
@@ -86,10 +96,10 @@ async fn main() -> Result<()> {
     
     println!("\nPortfolio Statistics (Initial Investment: ${:.2})", INITIAL_INVESTMENT);
     println!("Total trades: {}", trades.len());
-    println!("Long Asset1/Short Asset2 trades: {}", 
-        trades.iter().filter(|t| matches!(t.signal, TradingSignal::LongAsset1ShortAsset2)).count());
-    println!("Short Asset1/Long Asset2 trades: {}", 
-        trades.iter().filter(|t| matches!(t.signal, TradingSignal::ShortAsset1LongAsset2)).count());
+    println!("Long trades: {}", 
+        trades.iter().filter(|t| matches!(t.signal, TradingSignal::Long(_))).count());
+    println!("Short trades: {}", 
+        trades.iter().filter(|t| matches!(t.signal, TradingSignal::Short(_))).count());
     println!("Strategy Final Value: ${:.2}", strategy_final_value);
     println!("BTC Buy & Hold Final Value: ${:.2}", btc_final_value);
     println!("Strategy Total Return: {:.2}%", strategy_returns.last().map(|(_, ret)| *ret).unwrap_or(0.0));
