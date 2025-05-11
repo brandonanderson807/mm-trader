@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
         strategy.update_prices(btc_price.clone(), btc_price.clone());
         
         // For each asset, update its price in the strategy
-        for (_asset, _prices) in &asset_prices {
+        for (_asset, prices) in &asset_prices {
             if i < prices.len() {
                 // In a real implementation, we would update each asset's price here
                 // For now, the strategy just uses the reference timestamp

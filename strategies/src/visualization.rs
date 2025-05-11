@@ -95,13 +95,11 @@ pub fn create_rsi_visualization(
                 .unwrap_or(0.0);
             
             let style = ShapeStyle::from(color).filled();
-            let marker = match trade.signal {
-                TradingSignal::Long(_) => TriangleMarker::new((trade.timestamp, price * 0.95), 5, style),
-                TradingSignal::Short(_) => {
-                    // Instead of transform, manually create an inverted triangle
-                    TriangleMarker::new((trade.timestamp, price * 1.05), 5, style)
-                },
-                _ => Circle::new((trade.timestamp, price), 5, style),
+            // Use a common trait object instead of different marker types
+            let marker: Box<dyn PointCollection<'_, (DateTime<Utc>, f64), plotters::style::full_palette::BLUE>> = match trade.signal {
+                TradingSignal::Long(_) => Box::new(TriangleMarker::new((trade.timestamp, price * 0.95), 5, style)),
+                TradingSignal::Short(_) => Box::new(TriangleMarker::new((trade.timestamp, price * 1.05), 5, style)),
+                _ => Box::new(Circle::new((trade.timestamp, price), 5, style)),
             };
             marker
         }))?
@@ -195,12 +193,13 @@ pub fn create_rsi_visualization(
         // Draw long trades bar
         if long_trades > 0 {
             let i_f64 = i as f64;
+            let x1 = (i_f64 + 1.0 - 0.3) as i32;
+            let x2 = (i_f64 + 1.0 - 0.1) as i32;
+            let y1 = 0;
+            let y2 = long_trades as i32;
+            
             trade_chart.draw_series(std::iter::once(
-                Rectangle::new(
-                    [(i_f64 + 1.0 - 0.3) as i32, 0],
-                    [(i_f64 + 1.0 - 0.1) as i32, long_trades as i32],
-                    GREEN.filled(),
-                )
+                Rectangle::new([(x1, y1), (x2, y2)], GREEN.filled())
             ))?
             .label(format!("{} Long", asset));
         }
@@ -208,12 +207,13 @@ pub fn create_rsi_visualization(
         // Draw short trades bar
         if short_trades > 0 {
             let i_f64 = i as f64;
+            let x1 = (i_f64 + 1.0 + 0.1) as i32;
+            let x2 = (i_f64 + 1.0 + 0.3) as i32;
+            let y1 = 0;
+            let y2 = short_trades as i32;
+            
             trade_chart.draw_series(std::iter::once(
-                Rectangle::new(
-                    [(i_f64 + 1.0 + 0.1) as i32, 0],
-                    [(i_f64 + 1.0 + 0.3) as i32, short_trades as i32],
-                    RED.filled(),
-                )
+                Rectangle::new([(x1, y1), (x2, y2)], RED.filled())
             ))?
             .label(format!("{} Short", asset));
         }
