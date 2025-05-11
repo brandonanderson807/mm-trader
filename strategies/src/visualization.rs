@@ -1,7 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use plotters::prelude::*;
-use plotters::element::PointCollection;
 use std::collections::HashMap;
 
 use crate::gmx::PriceData;
@@ -114,7 +113,8 @@ pub fn create_rsi_visualization(
                     ))?;
                 },
             };
-            marker
+            // Return an empty result to satisfy the map function
+            Ok(())
         }))?
         .label(format!("{} Trades", asset))
         .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], color));
