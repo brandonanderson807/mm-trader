@@ -33,6 +33,8 @@ pub trait Strategy {
 pub enum TradingSignal {
     LongAsset1ShortAsset2,
     ShortAsset1LongAsset2,
+    Long(String),  // Asset symbol for long position
+    Short(String), // Asset symbol for short position
 }
 
 /// Struct representing a trade

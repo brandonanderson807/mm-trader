@@ -60,6 +60,8 @@ impl PairsTradingStrategy {
                 (current_price2 / position.trade.entry_price2 - 1.0) -
                 (current_price1 / position.trade.entry_price1 - 1.0)
             },
+            TradingSignal::Long(_) => current_price1 / position.trade.entry_price1 - 1.0,
+            TradingSignal::Short(_) => position.trade.entry_price1 / current_price1 - 1.0,
         };
 
         // Check profit taking and stop loss
@@ -93,6 +95,8 @@ impl PairsTradingStrategy {
                     (price2.price / position.trade.entry_price2 - 1.0) -
                     (price1.price / position.trade.entry_price1 - 1.0)
                 },
+                TradingSignal::Long(_) => price1.price / position.trade.entry_price1 - 1.0,
+                TradingSignal::Short(_) => position.trade.entry_price1 / price1.price - 1.0,
             };
 
             // Update available capital
