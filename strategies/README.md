@@ -157,6 +157,8 @@ Average Return per Trade: 1.02%
 - Strategy-specific PNG chart (`rsi_strategy.png` or `pairs_trading.png`)
 - Comprehensive performance visualizations
 
+**For Detailed Documentation**: See [BACKTEST.md](BACKTEST.md) for comprehensive documentation of the backtesting architecture, advanced metrics, and implementation details.
+
 ### Paper Trade Mode
 
 Simulates trading with live price feeds without executing real trades.
