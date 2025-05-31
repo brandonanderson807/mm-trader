@@ -12,3 +12,4 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 async-trait = "0.1"
 plotters = "0.3.7"
+clap = { version = "4.5", features = ["derive"] }

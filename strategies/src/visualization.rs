@@ -449,3 +449,144 @@ pub fn create_visualization(
 
     Ok(())
 }
+
+pub fn create_pairs_trading_visualization(
+    btc_prices: &[PriceData],
+    eth_prices: &[PriceData],
+    strategy_returns: &[(DateTime<Utc>, f64)],
+    trades: &[Trade],
+) -> Result<()> {
+    let root = BitMapBackend::new("pairs_trading.png", (1600, 1200)).into_drawing_area();
+    root.fill(&WHITE)?;
+    
+    // Split into three vertical areas
+    let (upper_area, rest) = root.split_vertically(400);
+    let (middle_area, lower_area) = rest.split_vertically(400);
+
+    let (from_date, to_date) = {
+        let first_date = btc_prices.first().map(|p| p.timestamp).unwrap_or_else(|| Utc::now());
+        let last_date = btc_prices.last().map(|p| p.timestamp).unwrap_or_else(|| Utc::now());
+        (first_date, last_date)
+    };
+
+    // 1. Top: Price Chart with Trade Markers
+    let mut price_chart = ChartBuilder::on(&upper_area)
+        .x_label_area_size(40)
+        .y_label_area_size(60)
+        .margin(10)
+        .caption("BTC and ETH Prices with Trade Signals", ("sans-serif", 30))
+        .build_cartesian_2d(
+            from_date..to_date, 
+            0.0..btc_prices.iter().chain(eth_prices.iter()).map(|p| p.price).fold(0.0, f64::max) * 1.1
+        )?;
+
+    price_chart.configure_mesh().draw()?;
+
+    // Draw BTC price
+    price_chart.draw_series(LineSeries::new(
+        btc_prices.iter().map(|p| (p.timestamp, p.price)),
+        &BLUE,
+    ))?
+    .label("BTC Price")
+    .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &BLUE));
+
+    // Draw ETH price
+    price_chart.draw_series(LineSeries::new(
+        eth_prices.iter().map(|p| (p.timestamp, p.price)),
+        &GREEN,
+    ))?
+    .label("ETH Price")
+    .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &GREEN));
+
+    // Draw trade markers
+    for trade in trades {
+        let btc_price = btc_prices.iter()
+            .find(|p| p.timestamp == trade.timestamp)
+            .map(|p| p.price)
+            .unwrap_or(0.0);
+        
+        let style = match trade.signal {
+            TradingSignal::LongAsset1ShortAsset2 => ShapeStyle::from(&RED).filled(),
+            TradingSignal::ShortAsset1LongAsset2 => ShapeStyle::from(&MAGENTA).filled(),
+            _ => ShapeStyle::from(&BLACK).filled(),
+        };
+        
+        price_chart.draw_series(std::iter::once(
+            Circle::new((trade.timestamp, btc_price), 5, style)
+        ))?;
+    }
+
+    price_chart
+        .configure_series_labels()
+        .background_style(&WHITE.mix(0.8))
+        .border_style(&BLACK)
+        .draw()?;
+
+    // 2. Middle: Spread Chart
+    let mut spread_chart = ChartBuilder::on(&middle_area)
+        .x_label_area_size(40)
+        .y_label_area_size(60)
+        .margin(10)
+        .caption("BTC-ETH Price Spread", ("sans-serif", 30))
+        .build_cartesian_2d(from_date..to_date, 0.0..100000.0)?;
+
+    spread_chart.configure_mesh().draw()?;
+
+    // Calculate and draw spread
+    let min_length = btc_prices.len().min(eth_prices.len());
+    let spread_data: Vec<(DateTime<Utc>, f64)> = (0..min_length)
+        .map(|i| (btc_prices[i].timestamp, btc_prices[i].price - eth_prices[i].price))
+        .collect();
+
+    spread_chart.draw_series(LineSeries::new(
+        spread_data.iter().map(|(x, y)| (*x, *y)),
+        &CYAN,
+    ))?
+    .label("BTC-ETH Spread")
+    .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &CYAN));
+
+    spread_chart
+        .configure_series_labels()
+        .background_style(&WHITE.mix(0.8))
+        .border_style(&BLACK)
+        .draw()?;
+
+    // 3. Bottom: Returns Chart
+    if !strategy_returns.is_empty() {
+        let min_return = strategy_returns.iter().map(|(_, ret)| *ret).fold(f64::INFINITY, f64::min);
+        let max_return = strategy_returns.iter().map(|(_, ret)| *ret).fold(f64::NEG_INFINITY, f64::max);
+        let return_margin = (max_return - min_return) * 0.1;
+
+        let mut returns_chart = ChartBuilder::on(&lower_area)
+            .x_label_area_size(40)
+            .y_label_area_size(60)
+            .margin(10)
+            .caption("Strategy Returns (%)", ("sans-serif", 30))
+            .build_cartesian_2d(from_date..to_date, (min_return - return_margin)..(max_return + return_margin))?;
+
+        returns_chart.configure_mesh()
+            .y_desc("Return %")
+            .draw()?;
+
+        returns_chart.draw_series(LineSeries::new(
+            strategy_returns.iter().map(|(x, y)| (*x, *y)),
+            &GREEN,
+        ))?
+        .label("Pairs Trading Strategy")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &GREEN));
+
+        // Add horizontal line at 0%
+        returns_chart.draw_series(LineSeries::new(
+            vec![(from_date, 0.0), (to_date, 0.0)],
+            &BLACK.mix(0.3),
+        ))?;
+
+        returns_chart
+            .configure_series_labels()
+            .background_style(&WHITE.mix(0.8))
+            .border_style(&BLACK)
+            .draw()?;
+    }
+
+    Ok(())
+}
