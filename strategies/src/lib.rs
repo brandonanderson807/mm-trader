@@ -1,9 +1,7 @@
 pub mod strategy;
 pub mod rsi_strategy;
 pub mod pairs_trading;
-pub mod backtest;
 pub mod visualization;
-pub mod trading_mode;
-pub mod backtest_mode;
-pub mod paper_trade_mode;
+pub mod trading_modes;
 pub mod gmx;
+pub mod price_client;

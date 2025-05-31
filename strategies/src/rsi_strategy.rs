@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use chrono::{DateTime, Utc};
 
-use crate::gmx::PriceData;
+use crate::price_client::PriceData;
 use crate::strategy::{Strategy, Trade, TradingSignal, ActivePosition};
 
 // Constants for the RSI strategy

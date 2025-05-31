@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use chrono::Utc;
 
-use crate::gmx::PriceData;
+use crate::price_client::PriceData;
 use crate::strategy::{Strategy, Trade, TradingSignal, ActivePosition, calculate_z_score};
 
 // Constants for the pairs trading strategy

@@ -10,9 +10,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 use uuid::Uuid;
 
-use strategies::trading_mode::{Feature, Signal, SignalType, KafkaConfig, KafkaHandler, TradingMode};
-use strategies::paper_trade_mode::PaperTradingMode;
-use strategies::backtest_mode::BacktestTradingMode;
+use strategies::trading_modes::{Feature, Signal, SignalType, KafkaConfig, KafkaHandler, TradingMode, PaperTradingMode, BacktestTradingMode};
 use strategies::rsi_strategy::RsiTradingStrategy;
 use strategies::backtest::BacktestConfig;
 use strategies::strategy::Strategy;
@@ -188,7 +186,7 @@ async fn test_full_kafka_integration_flow() -> Result<()> {
         "Full Integration Test".to_string(),
     );
 
-    let mut runner = strategies::trading_mode::TradingModeRunner::new(
+    let mut runner = strategies::trading_modes::TradingModeRunner::new(
         config.clone(),
         Box::new(paper_mode),
     )?;

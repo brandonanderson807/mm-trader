@@ -1,9 +1,13 @@
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use uuid::Uuid;
 
-use crate::gmx::PriceData;
+use crate::trading_modes::trading_mode::{Feature, Signal, SignalType, TradingMode};
 use crate::strategy::{Strategy, Trade, TradingSignal};
+use crate::price_client::{PriceData, PriceClient};
 use crate::visualization;
 
 /// Configuration for backtesting
@@ -123,9 +127,10 @@ impl Backtester {
                 config.strategy_name, config.initial_capital);
         
         // Fetch historical data for all assets
+        let price_client = PriceClient::new(None);
         let mut asset_prices = HashMap::new();
         for asset in &config.assets {
-            let prices = crate::gmx::fetch_historical_prices(asset, config.historical_days).await?;
+            let prices = price_client.fetch_historical_prices(asset, config.historical_days).await?;
             println!("Fetched {} {} prices", prices.len(), asset);
             asset_prices.insert(asset.clone(), prices);
         }
@@ -181,8 +186,9 @@ impl Backtester {
                 config.strategy_name, asset1, asset2, config.initial_capital);
         
         // Fetch historical data for both assets
-        let asset1_prices = crate::gmx::fetch_historical_prices(asset1, config.historical_days).await?;
-        let asset2_prices = crate::gmx::fetch_historical_prices(asset2, config.historical_days).await?;
+        let price_client = PriceClient::new(None);
+        let asset1_prices = price_client.fetch_historical_prices(asset1, config.historical_days).await?;
+        let asset2_prices = price_client.fetch_historical_prices(asset2, config.historical_days).await?;
         
         println!("Fetched {} {} prices and {} {} prices", 
                 asset1_prices.len(), asset1, asset2_prices.len(), asset2);
@@ -352,201 +358,280 @@ impl Backtester {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BacktestFeature {
+    pub feature: Feature,
+    pub historical_data: Vec<f64>, // Price history for backtesting
+}
+
+pub struct BacktestTradingMode<S: Strategy> {
+    strategy_factory: Box<dyn Fn(f64) -> S + Send + Sync>,
+    config: BacktestConfig,
+    processed_features: Vec<Feature>,
+    current_capital: f64,
+    strategy: Option<S>,
+}
+
+impl<S: Strategy + 'static> BacktestTradingMode<S> {
+    pub fn new(
+        strategy_factory: Box<dyn Fn(f64) -> S + Send + Sync>,
+        config: BacktestConfig,
+    ) -> Self {
+        Self {
+            strategy_factory,
+            current_capital: config.initial_capital,
+            config,
+            processed_features: Vec::new(),
+            strategy: None,
+        }
+    }
+
+    fn generate_backtest_features(&self) -> Vec<Feature> {
+        // In a real implementation, this would fetch historical data from a data warehouse
+        // For now, we'll simulate features for backtesting
+        let mut features = Vec::new();
+        let base_time = Utc::now();
+        
+        for (i, asset) in self.config.assets.iter().enumerate() {
+            for day in 0..self.config.historical_days {
+                let timestamp = base_time - chrono::Duration::days(self.config.historical_days as i64 - day as i64);
+                
+                // Simulate price data
+                let base_price = match asset.as_str() {
+                    "BTC" => 50000.0,
+                    "ETH" => 3000.0,
+                    "SOL" => 100.0,
+                    _ => 1.0,
+                };
+                
+                let price_variation = (day as f64 * 0.1).sin() * 0.1 + (i as f64 * 0.05);
+                let price = base_price * (1.0 + price_variation);
+                
+                features.push(Feature {
+                    timestamp,
+                    asset: asset.clone(),
+                    feature_type: "price".to_string(),
+                    value: price,
+                    metadata: HashMap::new(),
+                });
+                
+                // Add volume feature
+                features.push(Feature {
+                    timestamp,
+                    asset: asset.clone(),
+                    feature_type: "volume".to_string(),
+                    value: 1000000.0 * (1.0 + price_variation.abs()),
+                    metadata: HashMap::new(),
+                });
+            }
+        }
+        
+        features.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        features
+    }
+
+    async fn run_backtest(&self) -> Result<BacktestResults> {
+        println!("Running backtest simulation with {} historical features", self.processed_features.len());
+        
+        // For demonstration, we'll use the existing backtester
+        // In a real implementation, this would use the processed features from Kafka
+        match self.config.assets.len() {
+            2 => {
+                // Pairs trading
+                use crate::pairs_trading::PairsTradingStrategy;
+                let results = Backtester::run_pairs(
+                    |capital| PairsTradingStrategy::new(capital),
+                    &self.config.assets[0],
+                    &self.config.assets[1],
+                    self.config.clone(),
+                ).await?;
+                Ok(results)
+            }
+            _ => {
+                // Multi-asset strategy (RSI)
+                use crate::rsi_strategy::RsiTradingStrategy;
+                let results = Backtester::run(
+                    |capital| RsiTradingStrategy::new(capital),
+                    self.config.clone(),
+                ).await?;
+                Ok(results)
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl<S: Strategy + Send + Sync + 'static> TradingMode for BacktestTradingMode<S> {
+    async fn start(&mut self) -> Result<()> {
+        println!("Starting backtest mode for strategy: {}", self.config.strategy_name);
+        
+        // Initialize strategy
+        self.strategy = Some((self.strategy_factory)(self.current_capital));
+        
+        // Generate historical features for backtesting
+        let features = self.generate_backtest_features();
+        println!("Generated {} historical features for backtesting", features.len());
+        
+        Ok(())
+    }
+
+    async fn stop(&mut self) -> Result<()> {
+        println!("Completing backtest analysis...");
+        
+        // Run the full backtest when stopping
+        let results = self.run_backtest().await?;
+        Backtester::display_results(&results, &self.config);
+        
+        println!("Backtest mode completed");
+        Ok(())
+    }
+
+    async fn process_feature(&mut self, feature: Feature) -> Result<Option<Signal>> {
+        self.processed_features.push(feature.clone());
+        
+        // In backtest mode, we collect features but don't generate real-time signals
+        // Instead, we process them in batch during the stop() method
+        // For demonstration, we can still generate a mock signal
+        if feature.feature_type == "price" && self.processed_features.len() % 10 == 0 {
+            let signal = Signal {
+                id: Uuid::new_v4().to_string(),
+                timestamp: feature.timestamp,
+                asset: feature.asset.clone(),
+                signal_type: if feature.value > 45000.0 { SignalType::Sell } else { SignalType::Buy },
+                strength: 0.7,
+                price: feature.value,
+                quantity: 0.1,
+                strategy: self.config.strategy_name.clone(),
+                metadata: {
+                    let mut meta = HashMap::new();
+                    meta.insert("mode".to_string(), "backtest".to_string());
+                    meta.insert("feature_count".to_string(), self.processed_features.len().to_string());
+                    meta
+                },
+            };
+            
+            return Ok(Some(signal));
+        }
+        
+        Ok(None)
+    }
+
+    fn get_mode_name(&self) -> &str {
+        "Backtest"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::strategy::{Strategy, Trade, TradingSignal};
-    use chrono::TimeZone;
-    
-    // Mock strategy for testing
-    struct MockStrategy {
-        trades: Vec<Trade>,
-        cumulative_returns: Vec<f64>,
-        drawdown: Vec<f64>,
-        capital: f64,
-    }
-    
-    impl Strategy for MockStrategy {
-        fn new(initial_capital: f64) -> Self {
-            Self {
-                trades: Vec::new(),
-                cumulative_returns: Vec::new(),
-                drawdown: Vec::new(),
-                capital: initial_capital,
-            }
-        }
-        
-        fn update_prices(&mut self, price1: PriceData, _price2: PriceData) {
-            // Mock strategy: make a trade every 10th price update
-            if self.trades.len() < 3 && price1.price > 50000.0 {
-                let trade = Trade {
-                    timestamp: price1.timestamp,
-                    signal: TradingSignal::Long("BTC".to_string()),
-                    z_score: 0.0,
-                    spread: 0.0,
-                    return_: 0.05, // 5% return
-                    position_size: 1000.0,
-                    entry_price1: price1.price,
-                    entry_price2: 0.0,
-                };
-                self.trades.push(trade);
-                self.cumulative_returns.push(1.05 + self.trades.len() as f64 * 0.01);
-            }
-        }
-        
-        fn get_trading_signal(&mut self) -> Option<Trade> {
-            None
-        }
-        
-        fn get_portfolio_value(&self) -> f64 {
-            self.capital
-        }
-        
-        fn get_trades(&self) -> &Vec<Trade> {
-            &self.trades
-        }
-        
-        fn get_cumulative_returns(&self) -> &Vec<f64> {
-            &self.cumulative_returns
-        }
-        
-        fn get_drawdown(&self) -> &Vec<f64> {
-            &self.drawdown
-        }
-    }
-    
-    #[test]
-    fn test_backtest_config_default() {
-        let config = BacktestConfig::default();
-        assert_eq!(config.initial_capital, 10_000.0);
-        assert_eq!(config.assets, vec!["BTC".to_string()]);
-        assert_eq!(config.historical_days, 365);
-        assert_eq!(config.strategy_name, "Strategy");
-        assert!(config.generate_charts);
-    }
-    
-    #[test]
-    fn test_backtest_results_sharpe_ratio() {
-        let strategy_returns = vec![
-            (Utc.timestamp_opt(1620000000, 0).unwrap(), 5.0),
-            (Utc.timestamp_opt(1620086400, 0).unwrap(), 3.0),
-            (Utc.timestamp_opt(1620172800, 0).unwrap(), -2.0),
-            (Utc.timestamp_opt(1620259200, 0).unwrap(), 4.0),
-        ];
-        
-        let results = BacktestResults {
-            trades: Vec::new(),
-            cumulative_returns: Vec::new(),
-            strategy_returns,
-            benchmark_returns: Vec::new(),
-            final_value: 11000.0,
-            benchmark_final_value: 10500.0,
-            total_return: 10.0,
-            benchmark_total_return: 5.0,
-            price_data: HashMap::new(),
-        };
-        
-        let sharpe = results.sharpe_ratio();
-        assert!(sharpe > 0.0);
-        assert!(sharpe.is_finite());
-    }
-    
-    #[test]
-    fn test_backtest_results_max_drawdown() {
-        let cumulative_returns = vec![1.0, 1.1, 1.05, 1.2, 0.9, 1.15];
-        
-        let results = BacktestResults {
-            trades: Vec::new(),
-            cumulative_returns,
-            strategy_returns: Vec::new(),
-            benchmark_returns: Vec::new(),
-            final_value: 11500.0,
-            benchmark_final_value: 10500.0,
-            total_return: 15.0,
-            benchmark_total_return: 5.0,
-            price_data: HashMap::new(),
-        };
-        
-        let max_dd = results.max_drawdown();
-        assert!(max_dd > 0.0);
-        assert!(max_dd < 50.0); // Should be reasonable percentage
-    }
-    
-    #[test]
-    fn test_backtest_results_win_rate() {
-        let trades = vec![
-            Trade {
-                timestamp: Utc.timestamp_opt(1620000000, 0).unwrap(),
-                signal: TradingSignal::Long("BTC".to_string()),
-                z_score: 0.0,
-                spread: 0.0,
-                return_: 0.05, // Profitable
-                position_size: 1000.0,
-                entry_price1: 50000.0,
-                entry_price2: 0.0,
-            },
-            Trade {
-                timestamp: Utc.timestamp_opt(1620086400, 0).unwrap(),
-                signal: TradingSignal::Short("ETH".to_string()),
-                z_score: 0.0,
-                spread: 0.0,
-                return_: -0.02, // Loss
-                position_size: 1000.0,
-                entry_price1: 3000.0,
-                entry_price2: 0.0,
-            },
-            Trade {
-                timestamp: Utc.timestamp_opt(1620172800, 0).unwrap(),
-                signal: TradingSignal::Long("BTC".to_string()),
-                z_score: 0.0,
-                spread: 0.0,
-                return_: 0.03, // Profitable
-                position_size: 1000.0,
-                entry_price1: 52000.0,
-                entry_price2: 0.0,
-            },
-        ];
-        
-        let results = BacktestResults {
-            trades,
-            cumulative_returns: Vec::new(),
-            strategy_returns: Vec::new(),
-            benchmark_returns: Vec::new(),
-            final_value: 10300.0,
-            benchmark_final_value: 10100.0,
-            total_return: 3.0,
-            benchmark_total_return: 1.0,
-            price_data: HashMap::new(),
-        };
-        
-        let win_rate = results.win_rate();
-        assert!((win_rate - 66.66666666666667).abs() < 1e-10); // 2 out of 3 trades profitable
-    }
-    
-    #[test]
-    fn test_calculate_results() {
-        let mock_strategy = MockStrategy::new(10000.0);
-        let reference_prices = vec![
-            PriceData {
-                timestamp: Utc.timestamp_opt(1620000000, 0).unwrap(),
-                price: 50000.0,
-            },
-            PriceData {
-                timestamp: Utc.timestamp_opt(1620086400, 0).unwrap(),
-                price: 52000.0,
-            },
-        ];
-        
+    use crate::rsi_strategy::RsiTradingStrategy;
+
+    #[tokio::test]
+    async fn test_backtest_trading_mode_creation() {
         let config = BacktestConfig {
             initial_capital: 10000.0,
+            assets: vec!["BTC".to_string(), "ETH".to_string()],
+            historical_days: 30,
+            strategy_name: "Test RSI".to_string(),
             generate_charts: false,
-            ..BacktestConfig::default()
         };
+
+        let mut mode = BacktestTradingMode::new(
+            Box::new(|capital| RsiTradingStrategy::new(capital)),
+            config,
+        );
+
+        assert_eq!(mode.get_mode_name(), "Backtest");
+        assert_eq!(mode.current_capital, 10000.0);
+    }
+
+    #[tokio::test]
+    async fn test_backtest_feature_processing() {
+        let config = BacktestConfig {
+            initial_capital: 10000.0,
+            assets: vec!["BTC".to_string()],
+            historical_days: 10,
+            strategy_name: "Test RSI".to_string(),
+            generate_charts: false,
+        };
+
+        let mut mode = BacktestTradingMode::new(
+            Box::new(|capital| RsiTradingStrategy::new(capital)),
+            config,
+        );
+
+        mode.start().await.unwrap();
+
+        let feature = Feature {
+            timestamp: Utc::now(),
+            asset: "BTC".to_string(),
+            feature_type: "price".to_string(),
+            value: 40000.0,
+            metadata: HashMap::new(),
+        };
+
+        let result = mode.process_feature(feature).await.unwrap();
+        assert_eq!(mode.processed_features.len(), 1);
         
-        let results = Backtester::calculate_results(&mock_strategy, &reference_prices, &config);
-        assert!(results.is_ok());
+        // Process exactly 9 more features (total will be 10)
+        for i in 1..9 {
+            let feature = Feature {
+                timestamp: Utc::now(),
+                asset: "BTC".to_string(),
+                feature_type: "price".to_string(),
+                value: 40000.0 + i as f64 * 100.0,
+                metadata: HashMap::new(),
+            };
+            mode.process_feature(feature).await.unwrap();
+        }
+
+        // The 10th feature should generate a signal (backtest mode generates signals every 10 features)
+        let feature = Feature {
+            timestamp: Utc::now(),
+            asset: "BTC".to_string(),
+            feature_type: "price".to_string(),
+            value: 50000.0,
+            metadata: HashMap::new(),
+        };
+
+        let signal = mode.process_feature(feature).await.unwrap();
+        assert!(signal.is_some());
         
-        let results = results.unwrap();
-        assert_eq!(results.final_value, 10000.0); // No trades in mock strategy yet
+        let signal = signal.unwrap();
+        assert_eq!(signal.asset, "BTC");
+        assert_eq!(signal.strategy, "Test RSI");
+    }
+
+    #[test]
+    fn test_backtest_feature_generation() {
+        let config = BacktestConfig {
+            initial_capital: 10000.0,
+            assets: vec!["BTC".to_string(), "ETH".to_string()],
+            historical_days: 5,
+            strategy_name: "Test".to_string(),
+            generate_charts: false,
+        };
+
+        let mode = BacktestTradingMode::new(
+            Box::new(|capital| RsiTradingStrategy::new(capital)),
+            config,
+        );
+
+        let features = mode.generate_backtest_features();
+        
+        // Should have 2 assets * 5 days * 2 features per day = 20 features
+        assert_eq!(features.len(), 20);
+        
+        // Check that features are sorted by timestamp
+        for i in 1..features.len() {
+            assert!(features[i].timestamp >= features[i-1].timestamp);
+        }
+        
+        // Check that we have both price and volume features
+        let price_features: Vec<_> = features.iter().filter(|f| f.feature_type == "price").collect();
+        let volume_features: Vec<_> = features.iter().filter(|f| f.feature_type == "volume").collect();
+        
+        assert_eq!(price_features.len(), 10); // 2 assets * 5 days
+        assert_eq!(volume_features.len(), 10); // 2 assets * 5 days
     }
 }

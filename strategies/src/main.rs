@@ -3,21 +3,16 @@ mod strategy;
 mod pairs_trading;
 mod rsi_strategy;
 mod visualization;
-mod backtest;
-mod trading_mode;
-mod backtest_mode;
-mod paper_trade_mode;
+mod trading_modes;
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 
-use backtest::{Backtester, BacktestConfig};
 use strategy::Strategy;
 use rsi_strategy::RsiTradingStrategy;
 use pairs_trading::PairsTradingStrategy;
-use trading_mode::{KafkaConfig, TradingModeRunner};
-use backtest_mode::BacktestTradingMode;
-use paper_trade_mode::PaperTradingMode;
+use trading_modes::{KafkaConfig, TradingModeRunner, BacktestTradingMode, PaperTradingMode};
+use trading_modes::backtest::{Backtester, BacktestConfig};
 
 
 #[derive(Debug, Clone, ValueEnum)]
