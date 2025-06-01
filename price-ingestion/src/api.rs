@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use warp::Filter;
 
-use crate::iceberg::IcebergClient;
+use crate::kafka_storage::KafkaStorageClient;
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct PriceQuery {
     vendor: String,
     assets: String,
@@ -25,11 +25,15 @@ struct ApiResponse<T> {
 struct PriceResponse {
     token: String,
     timestamp: DateTime<Utc>,
-    price: f64,
+    open: f64,
+    high: f64,
+    low: f64,
+    close: f64,
+    volume: f64,
 }
 
-pub async fn start_server(iceberg_client: IcebergClient) -> Result<()> {
-    let client = warp::any().map(move || iceberg_client.clone());
+pub async fn start_server(kafka_client: KafkaStorageClient) -> Result<()> {
+    let client = warp::any().map(move || kafka_client.clone());
 
     let historical_prices = warp::path("historical_prices")
         .and(warp::get())
@@ -54,7 +58,7 @@ pub async fn start_server(iceberg_client: IcebergClient) -> Result<()> {
 
 async fn handle_historical_prices(
     query: PriceQuery,
-    client: IcebergClient,
+    client: KafkaStorageClient,
 ) -> Result<impl warp::Reply, Infallible> {
     tracing::info!("Historical prices request: {:?}", query);
 
@@ -96,7 +100,11 @@ async fn handle_historical_prices(
                     all_prices.push(PriceResponse {
                         token: price.token,
                         timestamp: price.timestamp,
-                        price: price.price,
+                        open: price.open,
+                        high: price.high,
+                        low: price.low,
+                        close: price.close,
+                        volume: price.volume,
                     });
                 }
             }

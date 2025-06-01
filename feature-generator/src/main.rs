@@ -1,13 +1,29 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rand::Rng;
+use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::producer::{FutureProducer, FutureRecord};
-use rdkafka::ClientConfig;
+use rdkafka::{ClientConfig, Message};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::time::Duration;
 use tokio::time;
+use tracing::{info, warn, error, debug};
+
+mod rsi;
+use rsi::PriceWindow;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PriceMessage {
+    pub token: String,
+    pub timestamp: DateTime<Utc>,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: f64,
+    pub source: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Feature {
@@ -18,174 +34,204 @@ pub struct Feature {
     pub metadata: HashMap<String, String>,
 }
 
+
 struct FeatureGenerator {
+    consumer: StreamConsumer,
     producer: FutureProducer,
-    topic: String,
-    assets: Vec<String>,
-    base_prices: HashMap<String, f64>,
+    price_topic: String,
+    feature_topic: String,
+    price_windows: HashMap<String, PriceWindow>,
+    rsi_period: usize,
 }
 
 impl FeatureGenerator {
     fn new() -> Result<Self> {
         let kafka_brokers = env::var("KAFKA_BROKERS").unwrap_or_else(|_| "localhost:9092".to_string());
-        let topic = env::var("FEATURE_TOPIC").unwrap_or_else(|_| "features".to_string());
+        let price_topic = env::var("PRICE_TOPIC").unwrap_or_else(|_| "price-data".to_string());
+        let feature_topic = env::var("FEATURE_TOPIC").unwrap_or_else(|_| "features".to_string());
+        let rsi_period: usize = env::var("RSI_PERIOD")
+            .unwrap_or_else(|_| "14".to_string())
+            .parse()
+            .unwrap_or(14);
 
+        // Create consumer
+        let consumer: StreamConsumer = ClientConfig::new()
+            .set("bootstrap.servers", &kafka_brokers)
+            .set("group.id", "feature-generator-group")
+            .set("auto.offset.reset", "latest")
+            .set("enable.auto.commit", "true")
+            .create()?;
+
+        // Create producer
         let producer: FutureProducer = ClientConfig::new()
             .set("bootstrap.servers", &kafka_brokers)
             .set("message.timeout.ms", "5000")
             .create()?;
 
-        let assets = vec![
-            "BTC".to_string(),
-            "ETH".to_string(),
-            "SOL".to_string(),
-            "PEPE".to_string(),
-            "SHIB".to_string(),
-            "XRP".to_string(),
-        ];
-
-        let mut base_prices = HashMap::new();
-        base_prices.insert("BTC".to_string(), 50000.0);
-        base_prices.insert("ETH".to_string(), 3000.0);
-        base_prices.insert("SOL".to_string(), 100.0);
-        base_prices.insert("PEPE".to_string(), 0.00001);
-        base_prices.insert("SHIB".to_string(), 0.00002);
-        base_prices.insert("XRP".to_string(), 0.5);
-
         Ok(Self {
+            consumer,
             producer,
-            topic,
-            assets,
-            base_prices,
+            price_topic,
+            feature_topic,
+            price_windows: HashMap::new(),
+            rsi_period,
         })
     }
 
-    async fn generate_price_feature(&self, asset: &str) -> Feature {
-        let mut rng = rand::thread_rng();
-        let base_price = self.base_prices.get(asset).unwrap_or(&1.0);
+    async fn start_consuming(&mut self) -> Result<()> {
+        // Subscribe to price topic
+        self.consumer.subscribe(&[&self.price_topic])?;
         
-        // Generate realistic price movement (±2% variation)
-        let variation = rng.gen_range(-0.02..=0.02);
-        let price = base_price * (1.0 + variation);
+        info!("🎯 Feature Generator started");
+        info!("📊 Consuming from topic: {}", self.price_topic);
+        info!("📡 Publishing features to: {}", self.feature_topic);
+        info!("📈 RSI period: {}", self.rsi_period);
 
-        let mut metadata = HashMap::new();
-        metadata.insert("source".to_string(), "mock_exchange".to_string());
-        metadata.insert("variation".to_string(), format!("{:.4}", variation));
-
-        Feature {
-            timestamp: Utc::now(),
-            asset: asset.to_string(),
-            feature_type: "price".to_string(),
-            value: price,
-            metadata,
+        loop {
+            match self.consumer.recv().await {
+                Ok(message) => {
+                    if let Some(payload) = message.payload() {
+                        match serde_json::from_slice::<PriceMessage>(payload) {
+                            Ok(price_msg) => {
+                                self.process_price_message(price_msg).await?;
+                            }
+                            Err(e) => {
+                                warn!("Failed to parse price message: {}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Error receiving message: {}", e);
+                    time::sleep(Duration::from_millis(100)).await;
+                }
+            }
         }
     }
 
-    async fn generate_volume_feature(&self, asset: &str) -> Feature {
-        let mut rng = rand::thread_rng();
-        
-        // Generate volume data (in USD millions)
-        let base_volume = match asset {
-            "BTC" => 20000.0,
-            "ETH" => 10000.0,
-            "SOL" => 1000.0,
-            _ => 100.0,
-        };
-        
-        let variation = rng.gen_range(0.5..=2.0);
-        let volume = base_volume * variation;
+    async fn process_price_message(&mut self, price_msg: PriceMessage) -> Result<()> {
+        debug!("Processing price for {}: {}", price_msg.token, price_msg.close);
 
-        let mut metadata = HashMap::new();
-        metadata.insert("source".to_string(), "mock_exchange".to_string());
-        metadata.insert("unit".to_string(), "USD_millions".to_string());
+        // Get or create price window for this token
+        let window = self.price_windows
+            .entry(price_msg.token.clone())
+            .or_insert_with(|| PriceWindow::new(self.rsi_period + 1));
 
-        Feature {
-            timestamp: Utc::now(),
-            asset: asset.to_string(),
-            feature_type: "volume".to_string(),
-            value: volume,
-            metadata,
+        // Add new price to window
+        window.add_price(price_msg.close);
+
+        // Calculate RSI if we have enough data
+        if let Some(rsi) = window.calculate_rsi(self.rsi_period) {
+            self.publish_rsi_feature(&price_msg.token, rsi, &price_msg.timestamp).await?;
         }
+
+        // Calculate additional features
+        self.calculate_price_features(&price_msg).await?;
+
+        Ok(())
     }
 
-    async fn generate_rsi_feature(&self, asset: &str) -> Feature {
-        let mut rng = rand::thread_rng();
-        
-        // Generate RSI values between 0 and 100
-        let rsi = rng.gen_range(20.0..=80.0);
-
+    async fn publish_rsi_feature(&self, asset: &str, rsi: f64, timestamp: &DateTime<Utc>) -> Result<()> {
         let mut metadata = HashMap::new();
-        metadata.insert("indicator".to_string(), "RSI_14".to_string());
-        metadata.insert("period".to_string(), "14".to_string());
+        metadata.insert("indicator".to_string(), "RSI".to_string());
+        metadata.insert("period".to_string(), self.rsi_period.to_string());
+        metadata.insert("source".to_string(), "real_time_calculation".to_string());
 
-        Feature {
-            timestamp: Utc::now(),
+        let feature = Feature {
+            timestamp: *timestamp,
             asset: asset.to_string(),
             feature_type: "rsi".to_string(),
             value: rsi,
             metadata,
-        }
+        };
+
+        self.publish_feature(&feature).await?;
+        info!("📈 RSI for {}: {:.2}", asset, rsi);
+
+        Ok(())
+    }
+
+    async fn calculate_price_features(&self, price_msg: &PriceMessage) -> Result<()> {
+        // Calculate additional features from OHLCV data
+        
+        // Price spread (high - low)
+        let spread = price_msg.high - price_msg.low;
+        let spread_feature = Feature {
+            timestamp: price_msg.timestamp,
+            asset: price_msg.token.clone(),
+            feature_type: "price_spread".to_string(),
+            value: spread,
+            metadata: {
+                let mut m = HashMap::new();
+                m.insert("high".to_string(), price_msg.high.to_string());
+                m.insert("low".to_string(), price_msg.low.to_string());
+                m
+            },
+        };
+        self.publish_feature(&spread_feature).await?;
+
+        // Price volatility (spread as percentage of close)
+        let volatility = (spread / price_msg.close) * 100.0;
+        let volatility_feature = Feature {
+            timestamp: price_msg.timestamp,
+            asset: price_msg.token.clone(),
+            feature_type: "volatility_percent".to_string(),
+            value: volatility,
+            metadata: {
+                let mut m = HashMap::new();
+                m.insert("spread".to_string(), spread.to_string());
+                m.insert("close".to_string(), price_msg.close.to_string());
+                m
+            },
+        };
+        self.publish_feature(&volatility_feature).await?;
+
+        // Volume feature
+        let volume_feature = Feature {
+            timestamp: price_msg.timestamp,
+            asset: price_msg.token.clone(),
+            feature_type: "volume".to_string(),
+            value: price_msg.volume,
+            metadata: {
+                let mut m = HashMap::new();
+                m.insert("source".to_string(), price_msg.source.clone());
+                m
+            },
+        };
+        self.publish_feature(&volume_feature).await?;
+
+        Ok(())
     }
 
     async fn publish_feature(&self, feature: &Feature) -> Result<()> {
         let feature_json = serde_json::to_string(feature)?;
         
-        let record = FutureRecord::to(&self.topic)
+        let record = FutureRecord::to(&self.feature_topic)
             .key(&feature.asset)
             .payload(&feature_json);
 
-        self.producer.send(record, None).await
+        self.producer.send(record, Duration::from_secs(5)).await
             .map_err(|e| anyhow::anyhow!("Failed to send feature: {}", e.0))?;
 
-        println!("📊 Published {} feature for {}: {:.4}", 
-                feature.feature_type, feature.asset, feature.value);
+        debug!("📊 Published {} feature for {}: {:.4}", 
+               feature.feature_type, feature.asset, feature.value);
 
         Ok(())
-    }
-
-    async fn run(&self) -> Result<()> {
-        let interval_ms: u64 = env::var("GENERATION_INTERVAL_MS")
-            .unwrap_or_else(|_| "5000".to_string())
-            .parse()
-            .unwrap_or(5000);
-
-        let mut interval = time::interval(Duration::from_millis(interval_ms));
-
-        println!("🚀 Starting feature generator...");
-        println!("📡 Publishing to topic: {}", self.topic);
-        println!("⏰ Interval: {}ms", interval_ms);
-        println!("🏷️  Assets: {:?}", self.assets);
-
-        loop {
-            interval.tick().await;
-
-            for asset in &self.assets {
-                // Generate different types of features
-                let price_feature = self.generate_price_feature(asset).await;
-                self.publish_feature(&price_feature).await?;
-
-                let volume_feature = self.generate_volume_feature(asset).await;
-                self.publish_feature(&volume_feature).await?;
-
-                let rsi_feature = self.generate_rsi_feature(asset).await;
-                self.publish_feature(&rsi_feature).await?;
-
-                // Small delay between assets to spread the load
-                time::sleep(Duration::from_millis(100)).await;
-            }
-
-            println!("📈 Generated features for {} assets", self.assets.len());
-        }
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("🎯 MM-Trader Feature Generator");
-    println!("===============================");
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
 
-    let generator = FeatureGenerator::new()?;
-    generator.run().await?;
+    info!("🎯 MM-Trader Feature Generator with Real-time RSI");
+    info!("================================================");
+
+    let mut generator = FeatureGenerator::new()?;
+    generator.start_consuming().await?;
 
     Ok(())
 }

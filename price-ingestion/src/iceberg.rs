@@ -1,8 +1,8 @@
 use anyhow::Result;
 use apache_iceberg::{Catalog, TableCreation, TableIdent};
-use apache_arrow::array::{Float64Array, StringArray, TimestampNanosecondArray};
-use apache_arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use apache_arrow::record_batch::RecordBatch;
+use arrow::array::{Float64Array, StringArray, TimestampNanosecondArray};
+use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use arrow::record_batch::RecordBatch;
 use chrono::{DateTime, Utc};
 use datafusion::prelude::*;
 use std::collections::HashMap;
