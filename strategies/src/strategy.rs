@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use std::collections::VecDeque;
 
-use crate::gmx::PriceData;
+use crate::price_client::PriceData;
 
 /// Trait defining the interface for all trading strategies
 pub trait Strategy {

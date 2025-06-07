@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use plotters::prelude::*;
 use std::collections::HashMap;
 
-use crate::gmx::PriceData;
+use crate::price_client::PriceData;
 use crate::strategy::{Trade, TradingSignal};
 
 const OUT_FILE_NAME: &str = "rsi_strategy.png";

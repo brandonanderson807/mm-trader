@@ -48,7 +48,7 @@ impl PriceClient {
         
         tracing::info!("Fetching data from price service: {}", url);
         
-        let response = self.client.get(&url).await?;
+        let response = self.client.get(&url).send().await?;
         let api_response: ApiResponse<Vec<PriceResponse>> = response.json().await?;
         
         if api_response.status != "ok" {

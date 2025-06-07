@@ -238,7 +238,7 @@ impl<S: Strategy + Send + Sync + 'static> TradingMode for PaperTradingMode<S> {
         if feature.feature_type == "price" {
             if let Some(ref mut strategy) = self.strategy {
                 // Convert feature to PriceData format expected by strategy
-                let price_data = crate::gmx::PriceData {
+                let price_data = crate::price_client::PriceData {
                     timestamp: feature.timestamp,
                     price: feature.value,
                 };
