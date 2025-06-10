@@ -17,9 +17,12 @@ MM-Trader is a modular trading system that combines:
 ```
 GMX API → Price-Ingestion → Kafka (price-data) → Feature-Generator → Kafka (features)
                                 ↓                                        ↓
-                           KSQL Analytics                        Trading Strategies
-                                ↓                                        ↓
-                        Real-time Alerts                        Position Management
+                          Data Warehouse                         Trading Strategies
+                          (Parquet Storage)                           ↓
+                                ↓                              Position Management
+                           KSQL Analytics ←→ Historical Analysis
+                                ↓                    ↓
+                        Real-time Alerts      Strategic Insights
 ```
 
 ## 📦 Components
@@ -72,7 +75,23 @@ GMX API → Price-Ingestion → Kafka (price-data) → Feature-Generator → Kaf
 - ✅ **RSI Signals**: Overbought (>70) and Oversold (<30) conditions
 - ✅ **Volume Monitoring**: Spike detection and analysis
 
-### 4. Trading Strategies (`strategies/`)
+### 4. Data Warehouse (`warehouse/`)
+**Scalable data storage and analytics with Parquet and DataFusion**
+- Historical price data storage in Parquet format
+- SQL query engine for complex analytics
+- REST API for data access and transformations
+- Integration with KSQL for real-time/historical hybrid queries
+
+**Warehouse Features:**
+- ✅ Parquet-based columnar storage for efficient querying
+- ✅ DataFusion SQL engine for complex analytics
+- ✅ REST API endpoints for data insertion and querying
+- ✅ KSQL transformation queries for streaming analytics
+- ✅ Historical data analysis (RSI, moving averages, volatility)
+- ✅ Support and resistance level detection
+- ✅ Price correlation analysis between tokens
+
+### 5. Trading Strategies (`strategies/`)
 **Automated trading strategies with backtesting**
 - RSI-based mean reversion strategy
 - Pairs trading with correlation analysis
@@ -95,38 +114,107 @@ GMX API → Price-Ingestion → Kafka (price-data) → Feature-Generator → Kaf
 
 ### Option 1: Full Docker Setup
 ```bash
-# Start Kafka ecosystem with KSQL
-docker-compose -f docker-compose-features.yml up -d
+# Start Kafka ecosystem, MinIO, and infrastructure
+docker-compose -f docker/docker-compose.yml up -d
 
 # Wait for services to be ready (2-3 minutes)
 docker logs kafka 2>&1 | grep "started (kafka.server.KafkaServer)"
 
-# Access Kafka UI at http://localhost:8080
-# Access KSQL at http://localhost:8088
+# Access services
+# - Kafka UI: http://localhost:8080
+# - KSQL Server: http://localhost:8088
+# - MinIO Console: http://localhost:9001 (admin/admin123)
 ```
 
 ### Option 2: Manual Development Setup
 ```bash
-# 1. Start Kafka (using your existing setup or Docker)
-docker-compose -f docker/kafka-docker-compose.yml up -d
+# 1. Start infrastructure (Kafka, MinIO, KSQL)
+docker-compose -f docker/docker-compose.yml up zookeeper kafka schema-registry ksqldb-server minio -d
 
-# 2. Start price ingestion
+# 2. Start data warehouse
+cd warehouse
+WAREHOUSE_PATH=/tmp/warehouse PORT=8090 cargo run
+
+# 3. Start price ingestion (in another terminal)
 cd price-ingestion
 cargo run
 
-# 3. Start feature generation (in another terminal)
+# 4. Start feature generation (in another terminal)
 cd feature-generator
 RUST_LOG=info cargo run
 
-# 4. Run trading strategies (in another terminal)
+# 5. Run trading strategies (in another terminal)
 cd strategies
 cargo run
 ```
 
-### Option 3: Integration Test
+### Option 3: Warehouse Testing
+```bash
+# Test the data warehouse API
+curl http://localhost:8090/health
+
+# Insert sample data
+curl -X POST http://localhost:8090/prices \
+  -H "Content-Type: application/json" \
+  -d '[{"token":"BTC","timestamp":"2025-06-08T14:00:00Z","price":45000.0}]'
+
+# Query data
+curl "http://localhost:8090/prices?token=BTC&limit=10"
+
+# Execute SQL queries
+curl -X POST http://localhost:8090/sql \
+  -H "Content-Type: application/json" \
+  -d '{"query":"SELECT token, AVG(price) as avg_price FROM prices_* GROUP BY token"}'
+```
+
+### Option 4: Integration Test
 ```bash
 # Quick test of the entire pipeline
 ./test-integration.sh
+```
+
+## 📊 Data Warehouse & Analytics
+
+### Data Warehouse API Endpoints
+
+**Base URL**: `http://localhost:8090`
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Service health check |
+| `POST` | `/prices` | Insert price data |
+| `GET` | `/prices` | Query price data with filters |
+| `POST` | `/sql` | Execute custom SQL queries |
+
+### Sample SQL Queries
+
+**RSI Calculation:**
+```sql
+WITH price_changes AS (
+  SELECT token, price - LAG(price, 1) OVER (PARTITION BY token ORDER BY timestamp) as change
+  FROM prices_* WHERE token = 'BTC'
+)
+SELECT token, timestamp, 
+  100 - (100 / (1 + (avg_gain / avg_loss))) as rsi
+FROM price_changes;
+```
+
+**Moving Averages:**
+```sql
+SELECT token, timestamp, price,
+  AVG(price) OVER (PARTITION BY token ORDER BY timestamp ROWS 19 PRECEDING) as sma_20,
+  AVG(price) OVER (PARTITION BY token ORDER BY timestamp ROWS 49 PRECEDING) as sma_50
+FROM prices_* WHERE token = 'ETH';
+```
+
+**Support/Resistance Levels:**
+```sql
+SELECT token, ROUND(price, 2) as price_level, COUNT(*) as touch_count
+FROM prices_* 
+WHERE token = 'BTC'
+GROUP BY token, ROUND(price, 2)
+HAVING COUNT(*) >= 3
+ORDER BY touch_count DESC;
 ```
 
 ## 📊 Real-time Analytics with KSQL
@@ -230,6 +318,13 @@ RSI_PERIOD=14
 RUST_LOG=info
 ```
 
+**Data Warehouse**
+```bash
+WAREHOUSE_PATH=/tmp/warehouse
+PORT=8090
+RUST_LOG=info
+```
+
 **Trading Strategies**
 ```bash
 KAFKA_BROKERS=localhost:9092
@@ -247,6 +342,9 @@ cd price-ingestion && cargo test
 
 # Test RSI calculation
 cd feature-generator && cargo test
+
+# Test data warehouse
+cd warehouse && cargo test
 
 # Test trading strategies
 cd strategies && cargo test
@@ -296,14 +394,22 @@ tail -f price-ingestion/logs/app.log
 - Sub-second latency for feature calculation
 
 ### ✅ **Advanced Analytics**
-- Streaming SQL with KSQL for complex queries
+- **Real-time**: Streaming SQL with KSQL for live queries
+- **Historical**: DataFusion SQL engine for complex analytics
+- **Hybrid**: Combined real-time and historical insights
 - Real-time technical indicators (RSI, volatility, volume)
 - Automated alert system for trading signals
+
+### ✅ **Scalable Data Storage**
+- Parquet columnar storage for efficient queries
+- MinIO S3-compatible object storage
+- REST API for data access and transformations
+- Complex SQL analytics (correlations, support/resistance)
 
 ### ✅ **Production Ready**
 - Comprehensive error handling and retries
 - Full test coverage (unit, integration, end-to-end)
-- Docker-based deployment
+- Docker-based deployment with infrastructure
 - Observability and monitoring
 
 ### ✅ **Extensible Design**
@@ -314,9 +420,11 @@ tail -f price-ingestion/logs/app.log
 ## 🔄 Data Flow Details
 
 1. **Price Ingestion**: GMX API → Historical backfill + real-time updates → Kafka `price-data`
-2. **Feature Generation**: Kafka `price-data` → RSI calculation + other indicators → Kafka `features`
-3. **Analytics**: KSQL streams → Real-time queries → Alerts and insights
-4. **Trading**: Kafka `features` → Strategy evaluation → Position management
+2. **Data Warehouse**: Kafka `price-data` → Parquet storage → Historical analytics
+3. **Feature Generation**: Kafka `price-data` → RSI calculation + other indicators → Kafka `features`
+4. **Real-time Analytics**: KSQL streams → Real-time queries → Alerts and insights
+5. **Historical Analytics**: Data Warehouse → Complex SQL queries → Strategic insights
+6. **Trading**: Kafka `features` + Historical insights → Strategy evaluation → Position management
 
 ## 🎯 Use Cases
 
